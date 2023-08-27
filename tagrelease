@@ -44,9 +44,9 @@ def update_version():
             version_file.write(updated_content)
 
         print("Version updated.")
-    
-    a,b,c,rev = list(cur_ver.values())
-    print("Current version: %d.%d.%d-%d"%(a,b,c,rev))
+
+    a, b, c, rev = list(cur_ver.values())
+    print("Current version: v%d.%d.%d-%d" % (a, b, c, rev))
 
 
 def parse_version(str_ver):
@@ -76,8 +76,8 @@ def commit_is_major(commit_message):
 def separate_changes_by_category(release_notes):
     changes_by_category = {
         "major_release": False,
-        "bugs": [],
         "features": [],
+        "bugs": [],
         "else": []
     }
     major = False
@@ -99,7 +99,7 @@ def generate_release_notes(last_hash):
     else:
         commit_range = 'HEAD'
 
-    format = '{"commit":"%H","subject":"%s","body":"%b"},'
+    format = '{"co":"%h","commit":"%H","subject":"%s","body":"%b"},'
     args = [
         'git', 'log',
         '--pretty=format:%s' % format,
@@ -142,8 +142,8 @@ def update_changelog(new_version, changes_by_category, release_type, dry_run=Fal
         if items:
             changelog_entry += "\n### %s:\n" % (cat)
             for item in items:
-                changelog_entry += "- [%s] %s\n" % (
-                    item['commit'], item['subject'])
+                changelog_entry += "- [%s](./commit/%s) %s\n" % (
+                    item['co'], item['commit'], item['subject'])
                 b = item['body']
                 # Remove lines containing "Signed-off-by"
                 body = "\n".join(line for line in b.split(
@@ -157,8 +157,8 @@ def update_changelog(new_version, changes_by_category, release_type, dry_run=Fal
                 existing_content = existing_content.split('\n', 1)[1]
             changelog_entry += existing_content
 
-    with open('CHANGELOG.md', 'w') as changelog_file:
-        if not dry_run:
+    if not dry_run:
+        with open('CHANGELOG.md', 'w') as changelog_file:
             changelog_file.write(changelog_entry)
 
 
@@ -179,7 +179,8 @@ def get_last_release_tag_commit():
     for line in out.split('\n'):
         if 'tags/v' in line:
             last_tag_commit = line.split()[0]
-            tag_parts = line.split('tags/v')[1].split(')')[0].split('.')
+            tag_parts = re.split(r'[),]', line.split(
+                'tags/v')[1])[0].split('.')
             last_tag_version = '.'.join(tag_parts)
             break
     return last_tag_commit, last_tag_version
@@ -240,7 +241,8 @@ def release(release_type, dry_run):
 
     last_hash, last_ver = get_last_release_tag_commit()
     current_version = parse_version(last_ver)
-    print("Current version:     %s hash: %s\n" % (last_ver, last_hash))
+    print("Current version:     v%s release commit hash: %s\n" %
+          (last_ver, last_hash))
 
     print("Generating release notes...")
     release_notes = generate_release_notes(last_hash)
@@ -283,6 +285,8 @@ def release(release_type, dry_run):
 
     print("Updating CHANGELOG.md")
     update_changelog(new_version, cats, release_type, dry_run)
+    print("Updating .version file")
+    update_version()
 
 
 def tag_release(commit, new_version, release_notes):
@@ -340,7 +344,7 @@ def main():
         update_version()
     else:
         current_version = get_current_version()
-        print("%s.%s.%s-%s" % (current_version['MAJOR'], current_version['MINOR'],
+        print("v%s.%s.%s-%s" % (current_version['MAJOR'], current_version['MINOR'],
               current_version['PATCH'], current_version['REVISION']))
 
 
