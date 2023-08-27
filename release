@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+import os
+from datetime import datetime
+import re
+import json
+
+
+def update_version():
+    last_hash, last_ver = get_last_release_tag_commit()
+    cur_ver = parse_version(last_ver)
+    revision = calculate_commit_count(last_hash)
+    cur_ver["REVISION"] = revision
+
+    version_content = ""
+    if os.path.exists(".version"):
+        with open(".version", "r") as version_file:
+            version_content = version_file.read()
+
+    updated_content = ""
+    updated = False
+
+    for line in version_content.splitlines():
+        if "=" in line:
+            key, value = line.split("=")
+            key = key.strip()
+            value = value.strip()
+            if key in cur_ver:
+                if int(value) != cur_ver[key]:
+                    updated_content += "%s=%s\n" % (key, cur_ver[key])
+                    updated = True
+                else:
+                    updated_content += line + "\n"
+            else:
+                updated_content += line + "\n"
+        else:
+            updated_content += line + "\n"
+
+    if not updated:
+        print("Already up to date.")
+    else:
+        with open(".version", "w") as version_file:
+            version_file.write(updated_content)
+
+        print("Version updated.")
+    
+    a,b,c,rev = list(cur_ver.values())
+    print("Current version: %d.%d.%d-%d"%(a,b,c,rev))
+
+
+def parse_version(str_ver):
+    a = b = c = rev = 0
+    if (str_ver):
+        semver_str, rev = str_ver.split('-')
+        a, b, c = semver_str.split('.')
+    return {"MAJOR": int(a), "MINOR": int(b), "PATCH": int(c), "REVISION": int(rev)}
+
+
+def categorize_commit(commit_message):
+    if "[fix]" in commit_message.lower():
+        return "bugs"
+    elif "[feat]" in commit_message.lower():
+        return "features"
+    else:
+        return "bugs"
+
+
+def commit_is_major(commit_message):
+    if "!" in commit_message:
+        return True
+    else:
+        return False
+
+
+def separate_changes_by_category(release_notes):
+    changes_by_category = {
+        "major_release": False,
+        "bugs": [],
+        "features": [],
+        "else": []
+    }
+    major = False
+
+    for commit in release_notes:
+        category = categorize_commit(commit["subject"])
+        if not major:
+            major = commit_is_major(
+                commit["subject"])
+        changes_by_category[category].append(commit)
+
+    changes_by_category['major_release'] = major
+    return changes_by_category
+
+
+def generate_release_notes(last_hash):
+    if last_hash:
+        commit_range = f'{last_hash}..HEAD'
+    else:
+        commit_range = 'HEAD'
+
+    format = '{"commit":"%H","subject":"%s","body":"%b"},'
+    args = [
+        'git', 'log',
+        '--pretty=format:%s' % format,
+        commit_range,
+        '--no-merges'
+    ]
+
+    if verbose:
+        print("# %s" % (' '.join(args)))
+    bytes = subprocess.check_output(args)
+    str = bytes.decode('utf-8').strip()
+    escaped_str = str.replace("},\n{", "},{").replace("'", "\'").replace(
+        "'", "\'").replace("\n", "\\n").replace("\r", "\\r")
+
+    # Convert JSON-like string to actual JSON
+    json_str = '[%s]' % escaped_str[:-1]  # Remove trailing comma and add []
+    # print(escaped_str)
+    release_notes_json = json.loads(json_str)
+    # print(release_notes_json)
+
+    return release_notes_json
+
+
+def update_changelog(new_version, changes_by_category, release_type, dry_run=False):
+    release_date = datetime.now().strftime('%d-%m-%Y')
+    changelog_entry = "# CHANGELOG\n"
+    changelog_entry += "## v%s %s" % (new_version, release_date)
+    if release_type == "MAJOR":
+        changelog_entry += " MAJOR RELEASE"
+    elif release_type == "MINOR":
+        changelog_entry += " MINOR RELEASE"
+    elif release_type == "PATCH":
+        changelog_entry += " BUGFIX RELEASE"
+    else:
+        changelog_entry += " NEW REVISION"
+
+    if changes_by_category["major_release"]:
+        del (changes_by_category["major_release"])
+    for cat, items in changes_by_category.items():
+        if items:
+            changelog_entry += "\n### %s:\n" % (cat)
+            for item in items:
+                changelog_entry += "- [%s] %s\n" % (
+                    item['commit'], item['subject'])
+                b = item['body']
+                # Remove lines containing "Signed-off-by"
+                body = "\n".join(line for line in b.split(
+                    "\n") if "Signed-off-by" not in line)
+                changelog_entry += "  %s\n" % (body)
+
+    if os.path.exists('CHANGELOG.md'):
+        with open('CHANGELOG.md', 'r') as changelog_file:
+            existing_content = changelog_file.read()
+            if existing_content.startswith('# CHANGELOG'):
+                existing_content = existing_content.split('\n', 1)[1]
+            changelog_entry += existing_content
+
+    with open('CHANGELOG.md', 'w') as changelog_file:
+        if not dry_run:
+            changelog_file.write(changelog_entry)
+
+
+def get_last_release_tag_commit():
+    args = ['git', 'log', '--no-walk', '--tags',
+            '--pretty=%h %d %s', '--decorate=full']
+    if verbose:
+        print("# %s" % ' '.join(args))
+    result = subprocess.run(args, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+
+    if result.returncode != 0:
+        return None, None
+
+    out = result.stdout
+    last_tag_commit = None
+    last_tag_version = None
+    for line in out.split('\n'):
+        if 'tags/v' in line:
+            last_tag_commit = line.split()[0]
+            tag_parts = line.split('tags/v')[1].split(')')[0].split('.')
+            last_tag_version = '.'.join(tag_parts)
+            break
+    return last_tag_commit, last_tag_version
+
+
+def calculate_commit_count(last_tag_commit):
+    if last_tag_commit:
+        commit_range = f'{last_tag_commit}..HEAD'
+    else:
+        commit_range = 'HEAD'
+    commit_count = subprocess.check_output(
+        ['git', 'rev-list', '--count', commit_range]).decode().strip()
+    return int(commit_count)
+
+
+def calculate_version(last_version, release_type):
+    last_major = int(last_version['MAJOR'])
+    last_minor = int(last_version['MINOR'])
+    last_patch = int(last_version['PATCH'])
+    last_revision = 0
+
+    if release_type == 'MAJOR':
+        last_major += 1
+        last_minor = 0
+        last_patch = 0
+        last_revision = 0
+    elif release_type == 'MINOR':
+        last_minor += 1
+        last_patch = 0
+        last_revision = 0
+    elif release_type == 'PATCH':
+        last_patch += 1
+        last_revision = 0
+    else:
+        last_hash, last_ver = get_last_release_tag_commit()
+        last_revision = calculate_commit_count(last_hash)
+
+    new_version = f'{last_major}.{last_minor}.{last_patch}-{last_revision}'
+    return new_version
+
+
+def get_current_version():
+    version = {}
+    if os.path.exists('.version'):
+        with open('.version', 'r') as version_file:
+            for line in version_file:
+                key, value = line.strip().split('=')
+                version[key] = value
+    else:
+        print('.version file does not exist. Please create it with the initial version.')
+        exit(1)
+
+    return version
+
+
+def release(release_type, dry_run):
+    res = False
+
+    last_hash, last_ver = get_last_release_tag_commit()
+    current_version = parse_version(last_ver)
+    print("Current version:     %s hash: %s\n" % (last_ver, last_hash))
+
+    print("Generating release notes...")
+    release_notes = generate_release_notes(last_hash)
+    cats = separate_changes_by_category(release_notes)
+    # autodetect release type
+    if (release_type == None):
+        print("Autodetection release type...")
+        if (cats['major_release']):
+            release_type = 'MAJOR'
+        elif (len(cats['features']) > 0):
+            release_type = 'MINOR'
+        elif (len(cats['bugs']) > 0):
+            release_type = 'PATCH'
+        else:
+            release_type = 'REVISION'
+
+        print("\tfeatures: %d\n\tbugs: %d\n\telse: %d" %
+              (len(cats['features']), len(cats['bugs']), len(cats['else'])))
+
+        print("Detected release type: %s" % (release_type))
+
+    new_version = calculate_version(current_version, release_type)
+    print("Release new version: %s" % new_version)
+    last_hash, last_ver = get_last_release_tag_commit()
+
+    current_commit = subprocess.check_output(
+        ['git', 'rev-parse', '--short', 'HEAD']).decode().strip()
+
+    print("Creating release tag... on commit %s" % (current_commit))
+    if dry_run:
+        res = True
+    else:
+        res = tag_release(current_commit, new_version, release_notes)
+
+    if (res):
+        print("Tagging was successful.")
+    else:
+        print("Unable to continue. Aborting...")
+        exit(1)
+
+    print("Updating CHANGELOG.md")
+    update_changelog(new_version, cats, release_type, dry_run)
+
+
+def tag_release(commit, new_version, release_notes):
+    tag = "v" + new_version
+    tag_message = f"Release {tag}\n\n{release_notes}"
+
+    args = ['git', 'tag', '-a', tag, '-m', '<RELEASE_NOTES>', commit]
+    if verbose:
+        print("# %s" % ' '.join(args))
+    args = ['git', 'tag', '-a', tag, '-m', tag_message, commit]
+    result = subprocess.run(args, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+
+    if result.returncode == 0:
+        return True
+    else:
+        print("Tagging failed with error code:", result.returncode)
+        print(result.stdout, result.stderr)
+        return False
+
+
+verbose = False
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Versioning script')
+    parser.add_argument('--update', '-u',
+                        action='store_true', help='update current version')
+    parser.add_argument('--verbose', '-v',
+                        action='store_true', help='verbose mode')
+    parser.add_argument('--release', '-r', action='store_true',
+                        help='Release new version')
+    parser.add_argument('--dry', '-d', action='store_true',
+                        help='Release new version dry run')
+    parser.add_argument('--type', '-t',
+                        choices=['MAJOR', 'MINOR', 'PATCH'],
+                        help='Force Set the release type', required=False)
+    args = parser.parse_args()
+    global verbose
+    verbose = args.verbose
+    if verbose:
+        print("verbose mode enabled!")
+
+    if args.dry:
+        print("Dry run mode enabled!")
+
+    if args.type and not (args.dry or args.release):
+        print('The --type argument can only be used with --release or --dry option.')
+        exit(1)
+
+    if args.release:
+        release_type = args.type
+        release(release_type, args.dry)
+    elif args.update:
+        update_version()
+    else:
+        current_version = get_current_version()
+        print("%s.%s.%s-%s" % (current_version['MAJOR'], current_version['MINOR'],
+              current_version['PATCH'], current_version['REVISION']))
+
+
+if __name__ == '__main__':
+    main()
