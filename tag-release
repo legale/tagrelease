@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 ARGUMENTS="$@"
 BRANCH="master"
 DRYRUN="0"
