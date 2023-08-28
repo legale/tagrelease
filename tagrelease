@@ -52,8 +52,18 @@ def update_version():
 def parse_version(str_ver):
     a = b = c = rev = 0
     if (str_ver):
-        semver_str, rev = str_ver.split('-')
-        a, b, c = semver_str.split('.')
+        if '-' in str_ver:
+            semver_str, rev = str_ver.split('-')
+        else:
+            semver_str = str_ver
+            rev = 0
+        if '.' in semver_str: ret = semver_str.split('.')
+        if len(ret) != 3:
+            print("passed version string '%s' has incorrect format. Expected: 1.1.1-11"%(str_ver))
+            exit(1)
+        
+        a,b,c = ret
+
     return {"MAJOR": int(a), "MINOR": int(b), "PATCH": int(c), "REVISION": int(rev)}
 
 
@@ -93,16 +103,36 @@ def separate_changes_by_category(release_notes):
     return changes_by_category
 
 
+def escape_chars(text):
+    return re.sub(r'(\{\}")', r'\\\1', text)
+
+
+def format_commit(hash):
+    sha = subprocess.check_output(
+        ['git', 'log', '-n1', '--pretty=format:%h', hash]).decode()
+    sha256 = subprocess.check_output(
+        ['git', 'log', '-n1', '--pretty=format:%H', hash]).decode()
+    subject = escape_chars(subprocess.check_output(
+        ['git', 'log', '-n1', '--pretty=format:%s', hash]).decode())
+    body = escape_chars(subprocess.check_output(
+        ['git', 'log', '-n1', '--pretty=format:%b', hash]).decode())
+    commit_data = {
+        "sha": sha,
+        "sha256": sha256,
+        "subject": subject,
+        "body": body
+    }
+    return commit_data
+
+
 def generate_release_notes(last_hash):
     if last_hash:
         commit_range = f'{last_hash}..HEAD'
     else:
         commit_range = 'HEAD'
 
-    format = '{"co":"%h","commit":"%H","subject":"%s","body":"%b"},'
     args = [
-        'git', 'log',
-        '--pretty=format:%s' % format,
+        'git', 'rev-list',
         commit_range,
         '--no-merges'
     ]
@@ -110,17 +140,13 @@ def generate_release_notes(last_hash):
     if verbose:
         print("# %s" % (' '.join(args)))
     bytes = subprocess.check_output(args)
-    str = bytes.decode('utf-8').strip()
-    escaped_str = str.replace("},\n{", "},{").replace("'", "\'").replace(
-        "'", "\'").replace("\n", "\\n").replace("\r", "\\r")
+    str = bytes.decode().strip()
+    git_hashes = str.splitlines()
+    commits = []
+    for hash in git_hashes:
+        commits.append(format_commit(hash))
 
-    # Convert JSON-like string to actual JSON
-    json_str = '[%s]' % escaped_str[:-1]  # Remove trailing comma and add []
-    # print(escaped_str)
-    release_notes_json = json.loads(json_str)
-    # print(release_notes_json)
-
-    return release_notes_json
+    return commits
 
 
 def update_changelog(new_version, changes_by_category, release_type, dry_run=False):
@@ -143,7 +169,7 @@ def update_changelog(new_version, changes_by_category, release_type, dry_run=Fal
             changelog_entry += "\n### %s:\n" % (cat)
             for item in items:
                 changelog_entry += "- [%s](./commit/%s) %s\n" % (
-                    item['co'], item['commit'], item['subject'])
+                    item['sha'], item['sha256'], item['subject'])
                 b = item['body']
                 # Remove lines containing "Signed-off-by"
                 body = "\n".join(line for line in b.split(
@@ -230,7 +256,9 @@ def get_current_version():
                 key, value = line.strip().split('=')
                 version[key] = value
     else:
-        print('.version file does not exist. Please create it with the initial version.')
+        print('.version file does not exist. initial .version file created.')
+        with open('.version', 'w') as file:
+            file.write("MAJOR=0\nMINOR=0\nPATCH=0\nREVISION=0\n")
         exit(1)
 
     return version
