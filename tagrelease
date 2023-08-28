@@ -127,7 +127,7 @@ def format_commit(hash):
     return commit_data
 
 
-def generate_release_notes(last_hash):
+def generate_release_commits(last_hash):
     if last_hash:
         commit_range = f'{last_hash}..HEAD'
     else:
@@ -151,7 +151,7 @@ def generate_release_notes(last_hash):
     return commits
 
 
-def update_changelog(new_version, changes_by_category, release_type, dry_run=False):
+def generate_release_notes(new_version, changes_by_category, release_type):
     release_date = datetime.now().strftime('%d-%m-%Y')
     repourl = ""
     with open('.repourl', 'r') as f:
@@ -181,6 +181,11 @@ def update_changelog(new_version, changes_by_category, release_type, dry_run=Fal
                 body = "\n".join(line for line in b.split(
                     "\n") if "Signed-off-by" not in line)
                 changelog_entry += "  %s\n" % (body)
+
+    return changelog_entry
+
+
+def update_changelog(changelog_entry, dry_run=False):
 
     if os.path.exists('CHANGELOG.md'):
         with open('CHANGELOG.md', 'r') as changelog_file:
@@ -279,8 +284,8 @@ def release(release_type, dry_run):
           (last_ver, last_hash))
 
     print("Generating release notes...")
-    release_notes = generate_release_notes(last_hash)
-    cats = separate_changes_by_category(release_notes)
+    release_commits = generate_release_commits(last_hash)
+    cats = separate_changes_by_category(release_commits)
     # autodetect release type
     if (release_type == None):
         print("Autodetection release type...")
@@ -300,8 +305,10 @@ def release(release_type, dry_run):
 
     new_version = calculate_version(current_version, release_type)
     print("Release new version: %s" % new_version)
-    last_hash, last_ver = get_last_release_tag_commit()
 
+    release_notes = generate_release_notes(new_version, cats, release_type)
+
+    last_hash, last_ver = get_last_release_tag_commit()
     current_commit = subprocess.check_output(
         ['git', 'rev-parse', '--short', 'HEAD']).decode().strip()
 
@@ -309,7 +316,7 @@ def release(release_type, dry_run):
     if dry_run:
         res = True
     else:
-        res = tag_release(current_commit, new_version, release_notes)
+        res = tag_release(current_commit, new_version, release_notes.replace('#',''))
 
     if (res):
         print("Tagging was successful.")
@@ -318,7 +325,7 @@ def release(release_type, dry_run):
         exit(1)
 
     print("Updating CHANGELOG.md")
-    update_changelog(new_version, cats, release_type, dry_run)
+    update_changelog(release_notes, dry_run)
     print("Updating .version file")
     update_version()
 
