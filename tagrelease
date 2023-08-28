@@ -57,12 +57,14 @@ def parse_version(str_ver):
         else:
             semver_str = str_ver
             rev = 0
-        if '.' in semver_str: ret = semver_str.split('.')
+        if '.' in semver_str:
+            ret = semver_str.split('.')
         if len(ret) != 3:
-            print("passed version string '%s' has incorrect format. Expected: 1.1.1-11"%(str_ver))
+            print(
+                "passed version string '%s' has incorrect format. Expected: 1.1.1-11" % (str_ver))
             exit(1)
-        
-        a,b,c = ret
+
+        a, b, c = ret
 
     return {"MAJOR": int(a), "MINOR": int(b), "PATCH": int(c), "REVISION": int(rev)}
 
@@ -151,6 +153,10 @@ def generate_release_notes(last_hash):
 
 def update_changelog(new_version, changes_by_category, release_type, dry_run=False):
     release_date = datetime.now().strftime('%d-%m-%Y')
+    repourl = ""
+    with open('.repourl', 'r') as f:
+        repourl = f.read().strip()
+
     changelog_entry = "# CHANGELOG\n"
     changelog_entry += "## v%s %s" % (new_version, release_date)
     if release_type == "MAJOR":
@@ -168,8 +174,8 @@ def update_changelog(new_version, changes_by_category, release_type, dry_run=Fal
         if items:
             changelog_entry += "\n### %s:\n" % (cat)
             for item in items:
-                changelog_entry += "- [%s](./commit/%s) %s\n" % (
-                    item['sha'], item['sha256'], item['subject'])
+                changelog_entry += "- [%s](%s/commit/%s) %s\n" % (
+                    item['sha'], repourl, item['sha256'], item['subject'])
                 b = item['body']
                 # Remove lines containing "Signed-off-by"
                 body = "\n".join(line for line in b.split(
@@ -361,6 +367,8 @@ def main():
     if args.dry:
         print("Dry run mode enabled!")
 
+    check_and_create_repourl_file()
+
     if args.type and not (args.dry or args.release):
         print('The --type argument can only be used with --release or --dry option.')
         exit(1)
@@ -374,6 +382,19 @@ def main():
         current_version = get_current_version()
         print("v%s.%s.%s-%s" % (current_version['MAJOR'], current_version['MINOR'],
               current_version['PATCH'], current_version['REVISION']))
+
+
+def check_and_create_repourl_file():
+    try:
+        with open('.repourl', 'r') as file:
+            repo_url = file.read().strip()
+    except FileNotFoundError:
+        default_url = "https://github.com/user/repo"
+        with open('.repourl', 'w') as file:
+            file.write(default_url)
+        print(
+            f"Created .repourl file with default repository URL: {default_url}")
+        exit(1)
 
 
 if __name__ == '__main__':
