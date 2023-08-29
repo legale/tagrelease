@@ -316,7 +316,8 @@ def release(release_type, dry_run):
     if dry_run:
         res = True
     else:
-        res = tag_release(current_commit, new_version, release_notes.replace('#',''))
+        res = tag_release(current_commit, new_version,
+                          release_notes.replace('#', ''))
 
     if (res):
         print("Tagging was successful.")
@@ -354,6 +355,7 @@ verbose = False
 
 def main():
     parser = argparse.ArgumentParser(description='Versioning script')
+    parser.description += '\n\nRun the script without any arguments to get current version'
     parser.add_argument('--update', '-u',
                         action='store_true', help='update current version')
     parser.add_argument('--verbose', '-v',
@@ -387,7 +389,7 @@ def main():
         update_version()
     else:
         current_version = get_current_version()
-        print("v%s.%s.%s-%s" % (current_version['MAJOR'], current_version['MINOR'],
+        print("%s.%s.%s-%s" % (current_version['MAJOR'], current_version['MINOR'],
               current_version['PATCH'], current_version['REVISION']))
 
 
